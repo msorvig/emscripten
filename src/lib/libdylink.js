@@ -642,6 +642,145 @@ var LibraryDylink = {
     * @param {Object=} localScope
     * @param {number=} handle
     */`,
+#if ASYNCIFY == 2
+  // Returns a map of function import name -> signature, where a signature
+  // holds the raw valtype bytes of the parameters and results, parsed from
+  // the wasm binary's type and import sections. Imports with types this
+  // parser doesn't understand (e.g. GC typed references) are omitted.
+  //
+  // NOTE: once the type reflection proposal is widely available this can be
+  // replaced with WebAssembly.Module.imports(), whose `type` field carries
+  // the same information (and also covers precompiled WebAssembly.Module
+  // inputs, which have no binary to parse).
+  $getFunctionImportTypes__deps: ['$UTF8ArrayToString'],
+  $getFunctionImportTypes: (binary) => {
+    var importTypes = {};
+    var b = binary instanceof Uint8Array ? binary : new Uint8Array(binary);
+    var pos = 8; // skip magic + version
+    var leb = () => {
+      var r = 0, s = 0, x;
+      do { x = b[pos++]; r |= (x & 0x7f) << s; s += 7; } while (x & 0x80);
+      return r >>> 0;
+    };
+    // Single-byte valtypes only; multi-byte (GC typed refs) makes us bail.
+    var okValtype = (v) => (v >= 0x7b && v <= 0x7f) || v == 0x70 || v == 0x6f;
+    var types = [];
+    while (pos < b.length) {
+      var secId = b[pos++];
+      var secEnd = leb();
+      secEnd += pos;
+      if (secId == 1) { // type section
+        var count = leb();
+        while (count-- && types) {
+          if (b[pos++] != 0x60) { types = null; break; } // not a plain func type
+          var sig = {params: [], results: []};
+          for (var n = leb(); n--;) sig.params.push(b[pos++]);
+          for (var n = leb(); n--;) sig.results.push(b[pos++]);
+          if (!sig.params.every(okValtype) || !sig.results.every(okValtype)) {
+            sig = null;
+          }
+          types.push(sig);
+        }
+      } else if (secId == 2 && types) { // import section
+        for (var count = leb(); count--;) {
+          var moduleNameLen = leb();
+          pos += moduleNameLen;
+          var nameLen = leb();
+          var name = UTF8ArrayToString(b, pos, nameLen);
+          pos += nameLen;
+          var kind = b[pos++];
+          if (kind == 0x00) { // function
+            var t = types[leb()];
+            if (t) importTypes[name] = t;
+          } else if (kind == 0x01 || kind == 0x02) { // table / memory
+            if (kind == 0x01) pos++; // reftype
+            var limitFlags = leb();
+            leb(); // min
+            if (limitFlags & 1) leb(); // max
+          } else if (kind == 0x03) { // global
+            pos += 2; // valtype + mutability
+          } else if (kind == 0x04) { // tag
+            pos++; // attribute
+            leb(); // type index
+          } else {
+            count = 0; // unknown kind: stop parsing imports
+          }
+        }
+        break; // nothing needed beyond the import section
+      }
+      pos = secEnd;
+    }
+    return importTypes;
+  },
+
+  // Modules built by makeWasmModule, keyed by signature (and role prefix).
+  // They only depend on the signature, so they can be shared by every stub
+  // of that signature.
+  $stubModuleCache: new Map(),
+
+  $makeWasmModule__deps: ['$stubModuleCache'],
+  $makeWasmModule: (key, sections) => {
+    var cached = stubModuleCache.get(key);
+    if (cached) return cached;
+    var uleb = (n) => {
+      var out = [];
+      do { var x = n & 0x7f; n >>>= 7; out.push(n ? x | 0x80 : x); } while (n);
+      return out;
+    };
+    var bytes = [0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
+    for (var [id, body] of sections) {
+      bytes.push(id, ...uleb(body.length), ...body);
+    }
+    var module = new WebAssembly.Module(new Uint8Array(bytes));
+    stubModuleCache.set(key, module);
+    return module;
+  },
+
+  // Returns fn as a wasm exported function of the given type, coercible to
+  // (ref null $type), by importing it into a module of that type and taking
+  // the re-export. For a wasm exported function this reuses the underlying
+  // wasm function directly (also validating its type); a plain JS function
+  // gets a wasm-typed host wrapper. (In the latter case a JS frame remains
+  // behind the call, but plain JS imports could never suspend anyway.)
+  $makeTypedWasmFunction__deps: ['$makeWasmModule'],
+  $makeTypedWasmFunction: (type, fn) => {
+    var module = makeWasmModule(`w${type.params}|${type.results}`, [
+      [1, [1, 0x60, type.params.length, ...type.params, type.results.length, ...type.results]],
+      [2, [1, 1, 0x65, 1, 0x66, 0x00, 0]], // import "e" "f": func of type 0
+      [7, [1, 1, 0x66, 0x00, 0]],          // export "f" = func 0 (the import)
+    ]);
+    return new WebAssembly.Instance(module, {e: {f: fn}}).exports.f;
+  },
+
+  // Builds a wasm trampoline for a lazily-bound import: a module-local
+  // (ref null $sig) global caches the target function reference. On first
+  // call a JS resolver returns the reference -- its frame is gone again
+  // before the target runs -- and the onward call is a call_ref through the
+  // global, so a suspension inside the target only ever crosses wasm frames.
+  $makeStubTrampoline__deps: ['$makeWasmModule', '$makeTypedWasmFunction'],
+  $makeStubTrampoline: (type, resolve) => {
+    var body = [0, // no locals
+      0x23, 0, 0xd1,                       // global.get 0; ref.is_null
+      0x04, 0x40, 0x10, 0, 0x24, 0, 0x0b]; // if: call $resolve; global.set 0; end
+    for (var i = 0; i < type.params.length; i++) {
+      body.push(0x20, i);                  // local.get i (i < 128 in practice)
+    }
+    body.push(0x23, 0, 0x14, 0, 0x0b);     // global.get 0; call_ref (type 0); end
+    var module = makeWasmModule(`t${type.params}|${type.results}`, [
+      [1, [2,                              // -- type section: 2 entries
+        0x60, type.params.length, ...type.params, type.results.length, ...type.results,
+        0x60, 0, 1, 0x63, 0]],             // type 1: () -> (ref null (type 0)) (resolver)
+      [2, [1, 1, 0x65, 1, 0x72, 0x00, 1]], // -- import "e" "r": func of type 1
+      [3, [1, 0]],                         // -- function section: 1 func of type 0
+      [6, [1, 0x63, 0, 0x01, 0xd0, 0, 0x0b]], // -- global: (mut (ref null (type 0))) = null
+      [7, [1, 1, 0x66, 0x00, 1]],          // -- export "f" = func 1
+      [10, [1, body.length, ...body]],     // -- code section
+    ]);
+    var resolver = () => makeTypedWasmFunction(type, resolve());
+    return new WebAssembly.Instance(module, {e: {r: resolver}}).exports.f;
+  },
+#endif
+
   $loadWebAssemblyModule__deps: [
     '$loadDynamicLibrary', '$getMemory', '$updateGOT',
     '$relocateExports', '$resolveGlobalSymbol', '$GOTHandler',
@@ -649,6 +788,10 @@ var LibraryDylink = {
     '$updateTableMap',
     '$wasmTable',
     '$addOnPostCtor',
+#if ASYNCIFY == 2
+    '$getFunctionImportTypes',
+    '$makeStubTrampoline',
+#endif
   ],
   $loadWebAssemblyModule: (binary, flags, libName, localScope, handle) => {
 #if DYLINK_DEBUG
@@ -732,6 +875,15 @@ var LibraryDylink = {
         return resolved;
       }
 
+#if ASYNCIFY == 2
+      // Fix for #23395: under JSPI, a suspending call must not pass through a
+      // JS frame, so the lazy-resolution stubs below cannot be JS functions.
+      // Learn each function import's signature so stubs can be built as wasm
+      // trampolines instead.
+      var importTypes =
+        binary instanceof WebAssembly.Module ? {} : getFunctionImportTypes(binary);
+#endif
+
       // TODO kill ↓↓↓ (except "symbols local to this module", it will likely be
       // not needed if we require that if A wants symbols from B it has to link
       // to B explicitly: similarly to -Wl,--no-undefined)
@@ -775,6 +927,25 @@ var LibraryDylink = {
           // when first called.
           if (!(prop in stubs)) {
             var resolved;
+#if ASYNCIFY == 2
+            if (/^__asyncjs__/.test(prop)) {
+              // Async JS import: suspending *at* the import boundary is fine,
+              // it is only suspending *through* a JS frame that traps (#23395).
+              stubs[prop] = new WebAssembly.Suspending(async (...args) => {
+                resolved ||= resolveSymbol(prop);
+                return resolved(...args);
+              });
+              return stubs[prop];
+            }
+            if (importTypes[prop]) {
+              // Wasm trampoline instead of a JS stub, see makeStubTrampoline.
+              stubs[prop] = makeStubTrampoline(importTypes[prop], () => resolveSymbol(prop));
+              return stubs[prop];
+            }
+#if ASSERTIONS
+            err(`import '${prop}' has an unknown signature and was bound via a JS stub; suspending calls through it will fail (see #23395)`);
+#endif
+#endif
             stubs[prop] = (...args) => {
               resolved ||= resolveSymbol(prop);
               return resolved(...args);
