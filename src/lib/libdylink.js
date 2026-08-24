@@ -779,6 +779,46 @@ var LibraryDylink = {
     var resolver = () => makeTypedWasmFunction(type, resolve());
     return new WebAssembly.Instance(module, {e: {r: resolver}}).exports.f;
   },
+
+  // Second half of the fix for #23395. Besides the side-module import stubs
+  // handled in loadWebAssemblyModule, the *main* module also gets JS stubs: for
+  // each of its as-yet-unresolved imports jsifier emits a named function that
+  // forwards through asyncifyStubs (see preamble.js). Under JSPI a suspending
+  // call must not cross a JS frame, so a call from the main module into a side
+  // module traps with "trying to suspend JS frames". Replace those stubs with
+  // wasm trampolines, which still resolve through asyncifyStubs but leave no JS
+  // frame behind. Signatures come from wasmImportSigs (see emscripten.py).
+  $replaceStubsWithTrampolines__deps: ['$makeStubTrampoline', '$wasmTypeCodes'],
+  $replaceStubsWithTrampolines: (imports) => {
+    for (let sym in wasmImportSigs) {
+      var stub = imports[sym];
+      // Only the generated stubs need this. Anything already resolved, or
+      // Suspending-wrapped by instrumentWasmImports, is left alone.
+      if (!stub?.stub) continue;
+      var sig = wasmImportSigs[sym];
+      var type = {
+        params: Array.from(sig.slice(1), (c) => wasmTypeCodes[c]),
+        results: sig[0] == 'v' ? [] : [wasmTypeCodes[sig[0]]],
+      };
+      if (!type.params.every(Boolean) || !type.results.every(Boolean)) {
+#if ASSERTIONS
+        err(`import '${sym}' has signature '${sig}' which cannot be expressed as a wasm trampoline; suspending calls through it will fail (see #23395)`);
+#endif
+        continue;
+      }
+      var tramp = makeStubTrampoline(type, () => {
+#if ASSERTIONS
+        if (!asyncifyStubs[sym]) abort(`external symbol '${sym}' is missing. perhaps a side module was not linked in? if this function was expected to arrive from a system library, try to build the MAIN_MODULE with EMCC_FORCE_STDLIBS=1 in the environment`);
+#endif
+        return asyncifyStubs[sym];
+      });
+      // Preserve the marker so that isSymbolDefined() and the side module
+      // import proxy keep treating this as an unresolved stub.
+      tramp.stub = true;
+      tramp.sig = sig;
+      imports[sym] = tramp;
+    }
+  },
 #endif
 
   $loadWebAssemblyModule__deps: [

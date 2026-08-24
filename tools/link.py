@@ -1315,6 +1315,9 @@ def phase_linker_setup(linker_args):  # ruff: ignore[complex-structure, too-many
       '$relocateExports',
       '$GOTHandler',
     ]
+    if settings.ASYNCIFY == 2:
+      # Called from getWasmImports in preamble.js.
+      settings.DEFAULT_LIBRARY_FUNCS_TO_INCLUDE += ['$replaceStubsWithTrampolines']
     # shared modules need memory utilities to allocate their memory
     settings.ALLOW_TABLE_GROWTH = 1
 

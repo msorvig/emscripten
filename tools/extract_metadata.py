@@ -268,6 +268,7 @@ def read_module_imports(module, metadata):
   imports = metadata.imports = []
   invoke_funcs = metadata.invoke_funcs = []
   em_js_func_types = metadata.em_js_func_types = {}
+  import_func_types = metadata.import_func_types = {}
 
   for i in module.get_imports():
     if i.kind == webassembly.ExternType.FUNC:
@@ -276,6 +277,7 @@ def read_module_imports(module, metadata):
       else:
         if i.field in em_js_funcs:
           em_js_func_types[i.field] = types[i.type]
+        import_func_types[i.field] = types[i.type]
         imports.append(i.field)
     elif i.kind in {webassembly.ExternType.GLOBAL, webassembly.ExternType.TAG}:
       imports.append(i.field)
@@ -304,6 +306,7 @@ class Metadata:
   js_deps: list[str]
   em_js_funcs: dict[str, str]
   em_js_func_types: dict[str, webassembly.FuncType]
+  import_func_types: dict[str, webassembly.FuncType]
   features: list[str]
   invoke_funcs: list[str]
   main_reads_params: bool

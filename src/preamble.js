@@ -733,6 +733,11 @@ function getWasmImports() {
   Asyncify.instrumentWasmImports(wasmImports);
 #endif
 #endif
+#if MAIN_MODULE && ASYNCIFY == 2
+  // Must run after instrumentWasmImports, so that async JS imports keep their
+  // WebAssembly.Suspending wrappers and only the dylink stubs are replaced.
+  replaceStubsWithTrampolines(wasmImports);
+#endif
   // prepare imports
 #if MAIN_MODULE
   var GOTProxyHandler = new Proxy(new Set({{{ JSON.stringify(Array.from(WEAK_IMPORTS)) }}}), GOTHandler);

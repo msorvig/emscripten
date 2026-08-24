@@ -818,6 +818,16 @@ def create_em_js(metadata):
   return em_js_funcs
 
 
+def create_wasm_import_sigs(metadata):
+  # Under JSPI the lazily-resolved stub functions that jsifier generates for the
+  # main module's undefined symbols must be replaced by wasm trampolines (see
+  # replaceStubsWithTrampolines in libdylink.js), which requires knowing each
+  # import's signature.
+  sigs = {name: func_type_to_sig(t) for name, t in metadata.import_func_types.items()}
+  elems = ','.join(f"'{k}':'{v}'" for k, v in sorted(sigs.items()))
+  return 'var wasmImportSigs = {%s};' % elems
+
+
 def add_standard_wasm_imports(send_items_map):
   extra_sent_items = []
 
@@ -1129,6 +1139,9 @@ def create_module(metadata, function_exports, other_exports, library_symbols, al
   }''' % sending)
     else:
       module.append('var wasmImports = %s;' % sending)
+
+  if settings.MAIN_MODULE and settings.ASYNCIFY == 2:
+    module.append(create_wasm_import_sigs(metadata))
 
   if settings.SUPPORT_LONGJMP == 'emscripten' or not settings.DISABLE_EXCEPTION_CATCHING:
     module += create_invoke_wrappers(metadata)
