@@ -219,6 +219,19 @@ inline void writeGenericWireType(GenericWireType*& cursor, std::size_t wt) {
   ++cursor;
 }
 
+// Explicit overload for long, for the same reason as size_t above: in Memory64
+// it is 64-bit, and it is a distinct type from int64_t there, which is long
+// long. Without this it falls back to the 32-bit generic template and fails to
+// compile. intptr_t, ptrdiff_t and ssize_t are all long in Memory64, so passing
+// any of them to val is affected.
+inline void writeGenericWireType(GenericWireType*& cursor, long wt) {
+  // Assigning through the unsigned member of matching width keeps the value's
+  // representation; the invoker decodes it by the registered type of the
+  // argument, which carries the signedness.
+  cursor->w[0].s = static_cast<std::make_unsigned_t<long>>(wt);
+  ++cursor;
+}
+
 template<typename T>
 void writeGenericWireType(GenericWireType*& cursor, T* wt) {
   cursor->w[0].p = wt;
