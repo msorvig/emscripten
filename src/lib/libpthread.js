@@ -1173,7 +1173,14 @@ var LibraryPThread = {
     // Before we call the thread entry point, make sure any shared libraries
     // have been loaded on this thread.  Otherwise our table might be not be
     // in sync and might not contain the function pointer `ptr` at all.
+#if ASYNCIFY == 2
+    // Under JSPI the synchronous dlsync suspends, so it needs its own
+    // suspender, otherwise it traps with "trying to suspend without
+    // WebAssembly.promising" on the pthread entry path.
+    await Asyncify.makeAsyncFunction(__emscripten_dlsync_self)();
+#else
     __emscripten_dlsync_self();
+#endif
 #endif
     // pthread entry points are always of signature 'void *ThreadMain(void *arg)'
     // Native codebases sometimes spawn threads with other thread entry point
