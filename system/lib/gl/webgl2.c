@@ -13,6 +13,7 @@
 
 #include <webgl/webgl1.h>
 #include <webgl/webgl2.h>
+#include <webgl/webgl2_ext.h>
 
 #include "webgl_internal.h"
 
@@ -46,6 +47,7 @@ VOID_SYNC_GL_FUNCTION_4(EM_FUNC_SIG_VIIII, void, glUniformMatrix4x3fv, GLint, GL
 ASYNC_GL_FUNCTION_10(EM_FUNC_SIG_VIIIIIIIIII, void, glBlitFramebuffer, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
 ASYNC_GL_FUNCTION_5(EM_FUNC_SIG_VIIIII, void, glRenderbufferStorageMultisample, GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 ASYNC_GL_FUNCTION_5(EM_FUNC_SIG_VIIIII, void, glFramebufferTextureLayer, GLenum, GLenum, GLuint, GLint, GLint);
+ASYNC_GL_FUNCTION_6(EM_FUNC_SIG_VIIIIII, void, glFramebufferTextureMultiviewOVR, GLenum, GLenum, GLuint, GLint, GLint, GLsizei);
 #ifdef __EMSCRIPTEN_FULL_ES3__
 RET_PTR_SYNC_GL_FUNCTION_4(EM_FUNC_SIG_PIIII, void *, glMapBufferRange, GLenum, GLintptr, GLsizeiptr, GLbitfield);
 ASYNC_GL_FUNCTION_3(EM_FUNC_SIG_VIII, void, glFlushMappedBufferRange, GLenum, GLintptr, GLsizeiptr);
@@ -307,7 +309,7 @@ void *emscripten_webgl2_get_proc_address(const char *name) {
   RETURN_FN(glDrawBuffersWEBGL);
 
   // WebGL 2 extensions:
-  // (currently none)
+  RETURN_FN(glFramebufferTextureMultiviewOVR);
 
   return 0;
 }

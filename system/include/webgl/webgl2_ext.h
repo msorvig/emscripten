@@ -71,3 +71,12 @@ WEBGL_APICALL void GL_APIENTRY glMultiDrawElementsInstancedBaseVertexBaseInstanc
   GLsizei drawCount);
 
 #endif /* EMSCRIPTEN_GL_WEBGL_multi_draw_instanced_base_vertex_base_instance */
+
+#ifndef EMSCRIPTEN_GL_OVR_multiview2
+#define EMSCRIPTEN_GL_OVR_multiview2
+
+// OVR_multiview2 (WebGL 2): attach layers of a 2D texture array as simultaneous render views.
+WEBGL_APICALL void GL_APIENTRY emscripten_glFramebufferTextureMultiviewOVR(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint baseViewIndex, GLsizei numViews);
+WEBGL_APICALL void GL_APIENTRY glFramebufferTextureMultiviewOVR(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint baseViewIndex, GLsizei numViews);
+
+#endif /* EMSCRIPTEN_GL_OVR_multiview2 */

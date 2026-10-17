@@ -144,6 +144,15 @@ for (/**@suppress{duplicate}*/var i = 0; i <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}};
   emscripten_webgl_enable_WEBGL_multi_draw__deps: ['$webgl_enable_WEBGL_multi_draw'],
   emscripten_webgl_enable_WEBGL_multi_draw: (ctx) => webgl_enable_WEBGL_multi_draw(GL.contexts[ctx].GLctx),
 
+#if MAX_WEBGL_VERSION >= 2
+  // OVR_multiview2 (WebGL 2 only): render into several layers of a texture array in one pass.
+  $webgl_enable_OVR_multiview2: (ctx) =>
+    !!(ctx.multiviewExt = ctx.getExtension('OVR_multiview2')),
+
+  emscripten_webgl_enable_OVR_multiview2__deps: ['$webgl_enable_OVR_multiview2'],
+  emscripten_webgl_enable_OVR_multiview2: (ctx) => webgl_enable_OVR_multiview2(GL.contexts[ctx].GLctx),
+
+#endif
   $webgl_enable_EXT_polygon_offset_clamp: (ctx) =>
     !!(ctx.extPolygonOffsetClamp = ctx.getExtension('EXT_polygon_offset_clamp')),
 
@@ -193,6 +202,7 @@ for (/**@suppress{duplicate}*/var i = 0; i <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}};
       'EXT_disjoint_timer_query_webgl2',
       'EXT_texture_norm16',
       'NV_shader_noperspective_interpolation',
+      'OVR_multiview2',
       'WEBGL_clip_cull_distance',
 #endif
       // WebGL 1 and WebGL 2 extensions
@@ -240,6 +250,7 @@ for (/**@suppress{duplicate}*/var i = 0; i <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}};
 #if MAX_WEBGL_VERSION >= 2
     '$webgl_enable_WEBGL_draw_instanced_base_vertex_base_instance',
     '$webgl_enable_WEBGL_multi_draw_instanced_base_vertex_base_instance',
+    '$webgl_enable_OVR_multiview2',
 #endif
     '$webgl_enable_EXT_polygon_offset_clamp',
     '$webgl_enable_EXT_clip_control',
@@ -1227,6 +1238,7 @@ for (/**@suppress{duplicate}*/var i = 0; i <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}};
       // Extensions that are available from WebGL >= 2 (no-op if called on a WebGL 1 context active)
       webgl_enable_WEBGL_draw_instanced_base_vertex_base_instance(GLctx);
       webgl_enable_WEBGL_multi_draw_instanced_base_vertex_base_instance(GLctx);
+      webgl_enable_OVR_multiview2(GLctx);
 
       // On WebGL 2, EXT_disjoint_timer_query is replaced with an alternative
       // that's based on core APIs, and exposes only the queryCounterEXT()
@@ -1278,6 +1290,8 @@ for (/**@suppress{duplicate}*/var i = 0; i <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}};
   $webglGetExtensions__deps: ['$getEmscriptenSupportedExtensions'],
   $webglGetExtensions: () => {
     var exts = getEmscriptenSupportedExtensions(GLctx);
+    // WebGL's OVR_multiview2 includes OVR_multiview; native GL code probes for both names.
+    if (exts.includes('OVR_multiview2')) exts.push('OVR_multiview');
 #if GL_EXTENSIONS_IN_PREFIXED_FORMAT
     exts = exts.concat(exts.map((e) => 'GL_' + e));
 #endif
@@ -4289,6 +4303,16 @@ for (/**@suppress{duplicate}*/var i = 0; i <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}};
     GLctx.extClipControl['clipControlEXT'](origin, depth);
   },
 
+#if MAX_WEBGL_VERSION >= 2
+  glFramebufferTextureMultiviewOVR__sig: 'viiiiii',
+  glFramebufferTextureMultiviewOVR: (target, attachment, texture, level, baseViewIndex, numViews) => {
+#if GL_ASSERTIONS
+    assert(GLctx.multiviewExt, 'OVR_multiview2 not supported, or not enabled. Before calling glFramebufferTextureMultiviewOVR(), call emscripten_webgl_enable_OVR_multiview2() to enable this extension, and verify that it returns true to indicate support. (alternatively, build with -sGL_SUPPORT_AUTOMATIC_ENABLE_EXTENSIONS=1 to enable all GL extensions by default)');
+#endif
+    GLctx.multiviewExt['framebufferTextureMultiviewOVR'](target, attachment, GL.textures[texture], level, baseViewIndex, numViews);
+  },
+
+#endif
   glPolygonModeWEBGL__sig: 'vii',
   glPolygonModeWEBGL: (face, mode) => {
 #if GL_ASSERTIONS
